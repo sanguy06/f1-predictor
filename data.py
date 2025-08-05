@@ -1,11 +1,12 @@
+#------------------------------DATA-COLLECTION----------------------------------#
+import os
 import requests
 import numpy as np
 import pandas as pd
 import fastf1
-import sys
 from collections import defaultdict
 
-
+cache_file = 'cache.csv'
 
 #--------------------------------FUNCTIONS------------------------------------#
 # Example Dataframe
@@ -15,7 +16,7 @@ def getDataFrame():
         "Belgium": pd.Series(["Max", "Charles", "Lewis"], index=[1,2,3]), 
         "Austria": pd.Series(["Lando", "Oscar", "Charles"], index=[1,2,3])
     })
-    print(d)
+    return d
 
 # Gets Race Results of Last 5 Rounds Formatted
 def getResults(i): 
@@ -34,8 +35,8 @@ def getResults(i):
     res = pd.DataFrame(dataSet)
     print(res)
 
-'''# Assign Driver to their Num
-def getDriverIDs():
+# Assign Driver to their Num
+def getDriverNames():
     driver_ids = {}
     res = requests.get('http://api.jolpi.ca/ergast/f1/2025/drivers')
     data = res.json()
@@ -43,7 +44,7 @@ def getDriverIDs():
     for driver in drivers: 
         id = int(driver['permanentNumber'])
         driver_ids[id] = f'{driver['givenName']} {driver['familyName']}'
-    return driver_ids'''
+    return driver_ids
 
 # Returns Array of Driver Names
 def getDrivers(): 
@@ -71,14 +72,15 @@ def encodeDrivers(df_drivers):
     df_encoded = pd.get_dummies(df_drivers, dtype=int)
     return df_encoded
 
-# Assign Driver to their ID (Jolpica API notation)
+# Assign Driver to their Code (Jolpica-F1 API Notation)
 def getDriverIDs(): 
     res = requests.get('http://api.jolpi.ca/ergast/f1/2025/driverstandings')
     data  = res.json()
-    driver_ids = []
+    driver_ids = {}
     standings = data['MRData']['StandingsTable']['StandingsLists'][0]['DriverStandings']
     for std in standings:   
-        driver_ids.append(std['Driver']['driverId'])
+        #driver_ids.append(std['Driver']['code'])
+        driver_ids[std['Driver']['driverId']] = std['Driver']['code']
     return driver_ids
 
 # Form - Returns DF for 2025 Driver Standings (WDC)
@@ -121,36 +123,100 @@ def getCurrentForm(drivers, round_num):
         data = res.json()
         location = data['MRData']['RaceTable']['Races'][0]['Circuit']['Location']['locality']
         locations.append(location)
-
     for driver in drivers: 
-        abb = driver[0:3].upper()
+        code = drivers[driver]
         dataSet['driver_id'].append(driver)
         for i in range(0,5):
             race = fastf1.get_session(2025, locations[i], 'R')
             race.load()
-            avg_lap_time = 0
-            if len(race.laps.pick_drivers(abb)) != 0:
-                laps = race.laps.pick_drivers(abb).pick_not_deleted()
-                avg_lap_time = laps['LapTime'].mean()
+            avg_lap_time = np.nan
+            if len(race.laps.pick_drivers(code)) != 0:      # Check if Driver Was in the Race
+                laps = race.laps.pick_drivers(code).pick_not_deleted()
+                avg_lap_time = pd.to_timedelta(laps['LapTime']).mean()
+                if pd.notnull(avg_lap_time):
+                    avg_lap_time = avg_lap_time.total_seconds()
+                else:
+                    avg_lap_time = np.nan
             dataSet[f'prev_lap_time_r{i+1}'].append(avg_lap_time)
     df = pd.DataFrame(dataSet)
     return df
 
-    
+# Update Cache, Pass in DF to be Merged
+def updateCache(cache_file, data):
+    if os.path.exists(cache_file): 
+        if os.path.getsize(cache_file) > 0:
+            df_cached = pd.read_csv(cache_file)
+            df_merged = pd.merge(df_cached, data, on='driver_id')
+            df_merged.to_csv(cache_file, index=False)
+            return df_merged
+        elif os.path.getsize(cache_file) <= 0: 
+            data.to_csv(cache_file, index=False)
+            return data
+    else: 
+        print("File Does Not Exist")
+
+# Calculate Avg Lap Times of 5 Prev Rounds
+def getAvg(cache_file):
+    df_cached = pd.read_csv(cache_file)
+    dataSet = defaultdict(list)
+    cols = ['prev_lap_time_r1', 'prev_lap_time_r2', 'prev_lap_time_r3', 'prev_lap_time_r4', 'prev_lap_time_r5']
+    for _, row in df_cached.iterrows(): 
+        dataSet['driver_id'].append(row['driver_id'])
+        total, rowLen = 0, 0
+        for col in cols: 
+            if pd.notna(row[col]):
+                total += row[col]
+                rowLen += 1
+        if rowLen != 0: 
+            avg = total / rowLen
+        else: 
+            avg = np.nan
+        dataSet['prev_avg_time'].append(avg)
+    return pd.DataFrame(dataSet)
+   
+# DF of Driver, Constructor Pairings
+def getConstructors(drivers):
+    dataSet = defaultdict(list)
+    res = requests.get('http://api.jolpi.ca/ergast/f1/2025/last/results')
+    data = res.json()
+    results = data['MRData']['RaceTable']['Races'][0]['Results']
+    for result in results: 
+        driver = result['Driver']['driverId'] 
+        constructor = result['Constructor']['constructorId']
+        if driver in drivers: 
+            dataSet['driver_id'].append(driver)
+            dataSet['constructor'].append(constructor)
+    df = pd.DataFrame(dataSet)
+    return df
+
+
 
 #-------------------------------------RUN-------------------------------------#
-
+cache_file = 'cache.csv'
+base_dir = os.path.dirname(__file__)
+file_path = os.path.join(base_dir, cache_file)
 # getResults(13)                                    # Race Results from Spain -> Belgium GP 
 # getDriverIDs()                                    # Dict of (id, driver_name) pair
 # df_drivers = getDrivers()                         # DF of Drivers with 'driver' column
 # drivers_encoded = encodeDrivers(df_drivers)       # DF of One-Hot Encoded Drivers
-# getDriverStandings(df_drivers)                    # DF of Current Driver Standings
-drivers = getDriverIDs()                          # DF of Drivers Assigned to Jolpica API Driver ID
-# print(getPrevLapTime(drivers))                    # DF of Drivers Previous Year Circuit Lap Times
-#circuits = getCircuits()
-# print(circuits)
-print(getCurrentForm(drivers, 14))
+#drivers = getDriverIDs()                          # DF of Drivers Assigned to Jolpica API Driver ID
 
+# print(getPrevLapTime(drivers))                    # DF of Drivers Previous Year Circuit Lap Times
+# circuits = getCircuits()
+# print(circuits)
+#print(getCurrentForm(drivers, 14))
+#prevRounds = getCurrentForm(drivers, 14)
+#print(prevRounds)
+#addToCache(prevRounds,cache_file)
+#constructors= getConstructors(drivers)
+#print(updateCache(file_path, constructors))
+#print(updateCache(file_path, prevRounds))
+#print(getPrevAvg(drivers))
+#prevRounds = getCurrentForm(drivers, 6)
+#updateCache(file_path, constructors)
+#prev_avg_times = getAvg(file_path)
+driver_standings = getDriverStandings()
+updateCache(file_path, driver_standings)
 
 
 
