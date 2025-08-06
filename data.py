@@ -4,6 +4,7 @@ import requests
 import numpy as np
 import pandas as pd
 import fastf1
+import statistics
 from collections import defaultdict
 
 cache_file = 'cache.csv'
@@ -99,23 +100,27 @@ def getDriverStandings():
     return df
 
 # Feature - Returns DF for Driver's Lap Time on that Previous Year's Circuit (FastF1 Telemetry Data)
-def getPrevLapTime(drivers): 
+def getPrevYrTime(drivers, yr, circuit): 
     dataSet = defaultdict(list)
-    race = fastf1.get_session(2024, 'Miami', 'R')
+    race = fastf1.get_session(yr, circuit, 'R')
     race.load()
     for driver in drivers: 
-        abb = driver[0:3].upper()
-        avg_lap_time = 0
-        if len(race.laps.pick_drivers(abb)) != 0:
-            laps = race.laps.pick_drivers(abb).pick_not_deleted()
-            avg_lap_time = laps['LapTime'].mean()
+        code = drivers[driver]
+        avg_lap_time = np.nan
+        if len(race.laps.pick_drivers(code)) != 0:
+            laps = race.laps.pick_drivers(code).pick_not_deleted()
+            avg_lap_time = pd.to_timedelta(laps['LapTime']).mean()
+            if pd.notnull(avg_lap_time):
+                avg_lap_time = avg_lap_time.total_seconds()
+            else:
+                avg_lap_time = np.nan
         dataSet['driver_id'].append(driver)
-        dataSet['prev_lap_time'].append(avg_lap_time)    
+        dataSet['prev_yr_lap_time'].append(avg_lap_time)    
     df = pd.DataFrame(dataSet)
     return df
 
 # Feature - Lap Times for Last 5 Rounds
-def getCurrentForm(drivers, round_num): 
+def getLastFiveRounds(drivers, round_num): 
     locations = []
     dataSet = defaultdict(list)
     for i in range((round_num -5), round_num):
@@ -171,7 +176,7 @@ def getAvg(cache_file):
             avg = total / rowLen
         else: 
             avg = np.nan
-        dataSet['prev_avg_time'].append(avg)
+        dataSet['avg_prev_lap_time'].append(avg)
     return pd.DataFrame(dataSet)
    
 # DF of Driver, Constructor Pairings
@@ -189,18 +194,126 @@ def getConstructors(drivers):
     df = pd.DataFrame(dataSet)
     return df
 
+# DF of Grid Position (Starting) 
+def getGridPosition(drivers, yr, circuit):
+    dataSet = defaultdict(list)
+    race = fastf1.get_session(yr, circuit, 'R')
+    race.load()
 
+    for driver in drivers: 
+        code = drivers[driver]
+        pos_series = race.results.loc[race.results['Abbreviation']==code, 'GridPosition']
+        pos = np.nan
+        dataSet['driver_id'].append(driver)
+        if not pos_series.empty:
+            pos = int(round(pos_series.iloc[0]))
+        dataSet['grid_position'].append(pos)
+    return pd.DataFrame(dataSet)
 
-#-------------------------------------RUN-------------------------------------#
+# DF of Finish Position
+def getFinishPosition(drivers, yr, circuit, roundNum):
+    dataSet = defaultdict(list)
+    race = fastf1.get_session(yr, circuit, 'R')
+    race.load()
+    for driver in drivers: 
+        code = drivers[driver]
+        pos_series = race.results.loc[race.results['Abbreviation']==code, 'Position']
+        pos = np.nan
+        dataSet['driver_id'].append(driver)
+        if not pos_series.empty:
+            pos = int(round(pos_series.iloc[0]))
+        dataSet[f'finish_r{roundNum}'].append(pos)
+    return pd.DataFrame(dataSet)
+
+# DF of Avg Finishes
+def getAvgFinish(cache_file):
+    df_cached = pd.read_csv(cache_file)
+    dataSet = defaultdict(list)
+    cols = ['finish_r1', 'finish_r2', 'finish_r3', 'finish_r4', 'finish_r5']
+    for _, row in df_cached.iterrows(): 
+        dataSet['driver_id'].append(row['driver_id'])
+        total, rowLen = 0, 5
+        for col in cols: 
+            if pd.notna(row[col]):
+                total += row[col]
+            else:
+                total += 25
+        if rowLen != 0: 
+            avg = total / rowLen
+        else: 
+            avg = np.nan
+        dataSet['avg_finish'].append(avg)
+    return pd.DataFrame(dataSet)
+
+# DF of Constuctor Standings
+def getConstructorStandings(cache_file): 
+    res = requests.get('http://api.jolpi.ca/ergast/f1/2025/14/constructorstandings')
+    data = res.json()
+    cons_standings = {}
+    dataSet = defaultdict(list)
+    standings = data['MRData']['StandingsTable']['StandingsLists'][0]['ConstructorStandings']
+    for std in standings: 
+        cons_standings[std['Constructor']['constructorId']] = std['position']
+    df = pd.read_csv(cache_file)
+    for driver in df['driver_id']:
+        cons = df.loc[df['driver_id']==driver, 'constructor'].iloc[0]
+        dataSet['driver_id'].append(driver)
+        dataSet['constructor_standing'].append(int(cons_standings[cons]))
+    return pd.DataFrame(dataSet)
+        
+# TODO Get avg qualifying pos        
+def getAvgQuali():
+    print()
+
+#------------------------------COMMANDS------------------------------#
 cache_file = 'cache.csv'
 base_dir = os.path.dirname(__file__)
 file_path = os.path.join(base_dir, cache_file)
+
+drivers = getDriverIDs() 
+#constructors= getConstructors(drivers)
+#updateCache(file_path, constructors)
+#last_five_rounds = getLastFiveRounds(drivers, 6)        # Rounds 1 - 5
+#updateCache(file_path, last_five_rounds)
+#avg_last_five = getAvg(cache_file)
+#updateCache(file_path, avg_last_five)
+#prev_yr_time = getPrevYrTime(drivers, 2024, 'Miami')
+#updateCache(file_path, prev_yr_time)
+#driver_standings = getDriverStandings()
+#updateCache(file_path, driver_standings)
+#gridPositions = getGridPosition(drivers, 2025, 'Miami')
+#updateCache(file_path, gridPositions)
+#finish= getFinishPosition(drivers, 2025, 'Jeddah', 5)
+#avg_finish = getAvgFinish(file_path)
+#updateCache(file_path, avg_finish)
+#constructor_standings = getConstructorStandings(file_path)
+#updateCache(file_path, constructor_standings)
+#driver_standings = getDriverStandings()
+#updateCache(file_path, driver_standings)
+
+
+
+'''
+# Changing CSV File Format
+df = pd.read_csv(file_path)
+df.drop(columns=['driver_standing_x','driver_standing_y'], inplace=True)        # Delete Columns
+df = df.sort_values(by='driver_standing', ascending=True)                       # Rearrange Columns in Ascending Order
+df.to_csv(file_path, index=False)
+'''
+
+
+
+#-------------------------------------RUN-------------------------------------#
+# Files 
+#cache_file = 'cache.csv'
+#base_dir = os.path.dirname(__file__)
+#file_path = os.path.join(base_dir, cache_file)
+
 # getResults(13)                                    # Race Results from Spain -> Belgium GP 
 # getDriverIDs()                                    # Dict of (id, driver_name) pair
 # df_drivers = getDrivers()                         # DF of Drivers with 'driver' column
 # drivers_encoded = encodeDrivers(df_drivers)       # DF of One-Hot Encoded Drivers
 #drivers = getDriverIDs()                          # DF of Drivers Assigned to Jolpica API Driver ID
-
 # print(getPrevLapTime(drivers))                    # DF of Drivers Previous Year Circuit Lap Times
 # circuits = getCircuits()
 # print(circuits)
@@ -215,8 +328,12 @@ file_path = os.path.join(base_dir, cache_file)
 #prevRounds = getCurrentForm(drivers, 6)
 #updateCache(file_path, constructors)
 #prev_avg_times = getAvg(file_path)
-driver_standings = getDriverStandings()
-updateCache(file_path, driver_standings)
+#driver_standings = getDriverStandings()
+#updateCache(file_path, driver_standings)
+#print(getPrevYrTime(drivers, 2024, 'Miami'))
+
+#------------------------------COMMANDS------------------------------#
+
 
 
 
