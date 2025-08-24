@@ -262,15 +262,29 @@ def getConstructorStandings(cache_file):
     return pd.DataFrame(dataSet)
         
 # TODO Get avg qualifying pos        
-def getAvgQuali():
+def getAvgQuali(cache_file):
     print()
+
+
+# Get Actual Race Results (Testing Data)
+def getRaceResults(yr, round_num): 
+    dataSet = defaultdict(list)
+    res = requests.get(f'http://api.jolpi.ca/ergast/f1/{yr}/{round_num}/results')
+    data = res.json()
+    results = data['MRData']['RaceTable']['Races'][0]['Results']
+    for result in results: 
+        #print(result['position'])
+        #print(result['Driver']['driverId'])
+        dataSet['driver_id'].append(result['Driver']['driverId'])
+        dataSet['actual_result'].append(result['position'])
+    return pd.DataFrame(dataSet)
 
 #------------------------------COMMANDS------------------------------#
 cache_file = 'cache.csv'
 base_dir = os.path.dirname(__file__)
 file_path = os.path.join(base_dir, cache_file)
 
-drivers = getDriverIDs() 
+#drivers = getDriverIDs() 
 #constructors= getConstructors(drivers)
 #updateCache(file_path, constructors)
 #last_five_rounds = getLastFiveRounds(drivers, 6)        # Rounds 1 - 5
@@ -290,16 +304,17 @@ drivers = getDriverIDs()
 #updateCache(file_path, constructor_standings)
 #driver_standings = getDriverStandings()
 #updateCache(file_path, driver_standings)
+#results = getRaceResults(2025, 6)
+#updateCache(file_path, results)
 
 
 
-'''
-# Changing CSV File Format
+'''# Changing CSV File Format
 df = pd.read_csv(file_path)
-df.drop(columns=['driver_standing_x','driver_standing_y'], inplace=True)        # Delete Columns
+df.drop(columns=['actual_result_x', 'actual_result_y'], inplace=True)        # Delete Columns
 df = df.sort_values(by='driver_standing', ascending=True)                       # Rearrange Columns in Ascending Order
-df.to_csv(file_path, index=False)
-'''
+df.to_csv(file_path, index=False)'''
+
 
 
 
