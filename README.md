@@ -1,5 +1,7 @@
-F1-Predictor
+# F1-Predictor
 
-Notes: 
-* Click on cache.csv to be able to view all the data I've so far collected taken from the Jolpica F1 API.
+# Description: 
+* This app makes requests to the Jolpica F1 API in order to gather F1 data such as driver standings, grid positions, telemetry data, etc. This data will be used to train a model in order to accurately predict future race winners. 
+
+# Source: 
 * Github to contribute to their open-source API is here: https://github.com/jolpica/jolpica-f1 
